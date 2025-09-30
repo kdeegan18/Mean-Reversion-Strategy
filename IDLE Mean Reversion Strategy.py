@@ -1,63 +1,58 @@
-import yfinance as yf
-import pandas as pd
 import numpy as np
+import pandas as pd
+import yfinance as yf
 
-# PARAMETERS
-symbol = "AAPL"           # replace with your ticker
-start = "2018-01-01"
-end = "2024-12-31"
-lookback = 20             # rolling window for mean/std
-entry_z = 2.0             # enter when z-score > entry_z or < -entry_z
-exit_z = 0.5              # exit when z-score reverts below this
-position_size = 1.0       # fraction of capital per trade (simple)
+# -------------------------------
+# Step 1: Load data from CSV
+# -------------------------------
+ticker = 'AAPL'
+file_path = f'{ticker}.csv'  # make sure the CSV file exists
+data = pd.read_csv(file_path)
 
-# 1) load price
-df = yf.download(symbol, start=start, end=end, progress=False)
-df = df[['Adj Close']].rename(columns={'Adj Close':'price'})
+# Ensure 'Date' is datetime
+data['Date'] = pd.to_datetime(data['Date'])
 
-# 2) choose series for mean reversion: here use log price differences (or price - rolling mean)
-df['logp'] = np.log(df['price'])
-df['rolling_mean'] = df['logp'].rolling(lookback).mean()
-df['rolling_std']  = df['logp'].rolling(lookback).std()
-df['z'] = (df['logp'] - df['rolling_mean']) / df['rolling_std']
+# -------------------------------
+# Step 2: Extract last 20 days up to yesterday
+# -------------------------------
+end_date = pd.Timestamp('2025-09-22')
+last_20_days = data[data['Date'] <= end_date].sort_values('Date').tail(20)
+closing_prices_20 = last_20_days['Close'].values
 
-# 3) signals
-df['long']  = (df['z'] < -entry_z).astype(int)
-df['short'] = (df['z'] >  entry_z).astype(int)
+# -------------------------------
+# Step 3: Calculate mean and std
+# -------------------------------
+mean_price = np.mean(closing_prices_20)
+std_price = np.std(closing_prices_20, ddof=1)  # sample std
 
-# simple position logic: hold until z crosses exit threshold
-position = 0
-positions = []
-for z_long, z_short, z in zip(df['long'], df['short'], df['z']):
-    # enter long
-    if position == 0 and z_long:
-        position = 1
-    # enter short
-    elif position == 0 and z_short:
-        position = -1
-    # exit long
-    elif position == 1 and abs(z) < exit_z:
-        position = 0
-    # exit short
-    elif position == -1 and abs(z) < exit_z:
-        position = 0
-    positions.append(position)
-df['position'] = positions
+# -------------------------------
+# Step 4: Define today's price and bounds
+# -------------------------------
+today_price = data[data['Date'] == '2025-09-23']['Close'].values[0]
+upper_bound = mean_price + 2 * std_price
+lower_bound = mean_price - 2 * std_price
 
-# 4) compute P&L (returns)
-df['returns'] = df['price'].pct_change().fillna(0)
-df['strategy_ret'] = df['position'].shift(1) * df['returns']    # assume daily rebalancing, no costs
+# -------------------------------
+# Step 5: Generate trading signal
+# -------------------------------
+z_score = (today_price - mean_price) / std_price
+signal = "Hold"
+likelihood = 0.0
 
-# 5) equity curve
-initial_capital = 100000
-df['strategy_eq'] = initial_capital * (1 + df['strategy_ret']).cumprod()
-df['buy_and_hold'] = initial_capital * (1 + df['returns']).cumprod()
+if today_price > upper_bound:
+    signal = "Sell (price likely to drop)"
+    likelihood = min((today_price - upper_bound) / std_price, 1)
+elif today_price < lower_bound:
+    signal = "Buy (price likely to rise)"
+    likelihood = min((lower_bound - today_price) / std_price, 1)
 
-# 6) performance summary
-total_ret = df['strategy_eq'].iloc[-1] / initial_capital - 1
-ann_ret = (1 + total_ret) ** (252 / len(df.dropna())) - 1   # crude annualization
-sharpe = (df['strategy_ret'].mean() / df['strategy_ret'].std()) * np.sqrt(252)
-
-print("Total return:", total_ret)
-print("Approx annual return:", ann_ret)
-print("Sharpe (ann):", sharpe)
+# -------------------------------
+# Step 6: Display results
+# -------------------------------
+print(f"Last 20 closing prices: {closing_prices_20}")
+print(f"Mean price: {mean_price:.2f}")
+print(f"Standard deviation: {std_price:.2f}")
+print(f"Today's price: {today_price:.2f}")
+print(f"Price bounds: [{lower_bound:.2f}, {upper_bound:.2f}]")
+print(f"Trading signal: {signal}")
+print(f"Likelihood (0 to 1 scale): {likelihood:.2f}")
