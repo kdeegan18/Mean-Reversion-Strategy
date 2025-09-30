@@ -1,5 +1,5 @@
 # Mean-Reversion-Strategy
-This is a program for the King's Quant Society Taster Session 
+# This is a program for the King's Quant Society Taster Session 
 import numpy as np
 import pandas as pd
 import yfinance as yf
